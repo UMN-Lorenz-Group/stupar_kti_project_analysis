@@ -1,0 +1,1 @@
+# stupar_kti_project_analysis
