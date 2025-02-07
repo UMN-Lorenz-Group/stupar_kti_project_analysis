@@ -1,0 +1,423 @@
+
+---
+title: "KTI_DESeq2_TC_OCRP_Analysis"
+author: "Vishnu Ramasubramanian"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Introduction 
+
+
+
+
+# Setup
+
+Load necessary libraries and set global options.
+
+```{r setup, include=FALSE}
+# Setup chunk: Load necessary libraries and set options
+if(!require("DESeq2")){
+  BiocManager::install("DESeq2")
+}
+# Load necessary library for DESeq2 analysis
+library(DESeq2)
+library(gplots)
+library(RColorBrewer)
+
+library(ggplot2)
+library(ggvenn)
+library(gplots)
+
+
+library(org.Gmax.eg.db)
+library(clusterProfiler)
+
+library(ggplot2)
+library(enrichplot) 
+
+###
+
+BiocManager::install("DEGreport") 
+library(DEGreport)
+library(dplyr)  # For data manipulation
+
+
+# Set options for RMarkdown chunks
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Data Preparation
+Load R workspace containing count data and  meta information. Filter out samples that are not relevant for this analysis and
+prepare table with meta info. 
+
+
+```{r data-preparation}
+
+# Set working directory to the specified project folder
+setwd("C:/Users/ivanv/Desktop/UMN_Projects/Ritesh_DESeq_Analysis/KTI_MS_RNASeqAnalysis/")
+
+# Load the dataset
+
+load("KTI_DESeq2_TC_Analysis_Data.RData")
+
+### Remove BBI and 7s samples from data to retain KTI and Bert samples 
+
+BBI7sInd <- grep("BB1|7s",colnames(Dat_Sub_Filt))
+dat_Sub1_Filt <- Dat_Sub_Filt[,-BBI7sInd]
+dat_Filt <- dat_Sub1_Filt
+
+### factor names
+
+factNames_Filt <- colnames(dat_Filt)
+factNamesSplt_Filt <- lapply(factNames_Filt,function(x) strsplit(x,"-"))
+factNamesLevels_Filt <- unlist(lapply(factNamesSplt_Filt,function(x)paste(x[[1]][1],x[[1]][2],x[[1]][3],sep="-")))
+
+stageNamesLevels_Filt <- unlist(lapply(factNamesSplt_Filt,function(x)paste(x[[1]][1],x[[1]][2],sep="-")))
+mutNamesLevels_Filt <- unlist(lapply(factNamesSplt_Filt,function(x) x[[1]][3]))
+
+####
+
+conditionFilt <- factor(factNamesLevels_Filt)
+conditionFilt <- gsub("-","_",conditionFilt)
+conditionFilt <- as.factor(conditionFilt)
+conditionFilt =relevel(conditionFilt,ref = "R5_1_Bert")
+
+####
+stageFilt <- factor(stageNamesLevels_Filt)
+stageFilt <- gsub("-","_",stageFilt)
+stageFilt <- as.factor(stageFilt)
+stageFilt =relevel(stageFilt,ref = "R5_1")
+###
+mutFilt <- factor(mutNamesLevels_Filt)
+mutFilt <- as.factor(mutFilt)
+genoFilt =relevel(mutFilt,ref = "Bert")
+
+### 
+
+coldataFilt <- data.frame(row.names=colnames(dat_Filt),conditionFilt,stageFilt,genoFilt)
+colnames(coldataFilt) <- c("Condition","Stage","Genotype")
+head(coldataFilt)
+
+rownames(dat_Filt) <- gsub(".Wm82.a4.v1","",rownames(dat_Filt))
+dat_Filt <- apply(dat_Filt,2,function(x) round(x,digits=0))
+```
+
+# DESeq2 Analysis
+
+Create DESeq data from count data matrix and set design to 'Genotype + Stage + Genotype:Stage' to specify the full model. DESeq function encompasses several steps in model fitting and testing and calls sub-functions to perform the following steps:
+
+ i) estimation of size factors, 
+ii) estimation of dispersions, 
+iii) calculation of gene-wise dispersion estimates, 
+iv) estimation of mean-dispersion relationship, 
+v)  adjustment of dispersion estimates to get final dispersion estimates, 
+vi) model fitting and performance of statistical tests. 
+
+
+```{r DESeq2}
+# Filter the data for specific conditions and create a new column
+
+dds_Filt <- DESeqDataSetFromMatrix(countData = dat_Filt, colData = coldataFilt,design=~ Genotype+Stage+Genotype:Stage)
+ddsFilt <- DESeq(dds_Filt) 
+
+ddsFilt
+
+```
+
+## Data Visualization
+
+ Visualization of dispersion estimates from the model 
+
+```{r disp-plots}
+
+# Plot Dispersions:
+# png(paste("AllStages-qc-Filt-dispersions-OCRP.png",sep=""), 1000, 1000, pointsize=20)
+# plotDispEsts(ddsFilt, main="Dispersion plot")
+# dev.off() 
+
+plotDispEsts(ddsFilt, main="Dispersion plot")
+
+``` 
+
+Black points correspond to gene-wise dispersion estimates plotted against normalized mean counts. Red points correspond to the fitted values from the model. Blue points correspond to final shrunken estimates and those black points circled in blue corresponds to those points that were not shrunk towards the fitted values. For detailed interpretation see here.
+
+### log transformation of filtered DESeq data 
+
+```{r RLogTransform}
+
+# Regularized log transformation for clustering/heatmaps, etc
+rldFilt <- rlogTransformation(ddsFilt)
+head(assay(rldFilt))
+hist(assay(rldFilt))
+``` 
+
+### PCA plots 
+Visualize clustering of sample sub-groups based on genotype, stage and combinations of genotype and stage. 
+
+```{r PCAPlots}
+
+### PCA on samples grouped on combinations of genotype and stage 
+
+plotPCA(rldFilt,intgroup="Condition") 
+
+### PCA on samples grouped on stage 
+
+plotPCA(rldFilt,intgroup="Stage")
+
+### PCA on samples grouped on genotype
+
+plotPCA(rldFilt,intgroup="Genotype") 
+
+``` 
+
+```{r SavePCAPlots,eval=FALSE,render=FALSE}
+
+# R6-2 KTI is closer to R6-1 KTI/Bert than R6-2 Bert (otherwise, the samples cluster separately according to stages)
+
+
+# Principal Components Analysis (PCA) based on conditions 
+
+# png(paste("AllStages-qc-Filt-PCA-OCRP.png",sep=""), 1000, 1000, pointsize=20)
+# plotPCA(rldFilt,intgroup="Condition") 
+# dev.off()
+
+# Principal Components Analysis based on stages 
+# png(paste("AllStages-qc-Filt-PCA_Stages-OCRP.png",sep=""), 1000, 1000, pointsize=20)
+# plotPCA(rldFilt,intgroup="Stage") 
+# dev.off()
+
+# Principal Components Analysis based on genotype
+# png(paste("AllStages-qc-Filt-PCA_Genotypes-OCRP.png",sep=""), 1000, 1000, pointsize=20)
+# plotPCA(rldFilt,intgroup="Genotype") 
+# dev.off()
+
+
+``` 
+
+#### Heatmap of assay sample distance
+
+```{r Heatmap of sample distance }
+
+## Use RColorBrewer, better
+library(RColorBrewer)
+(mycols <- brewer.pal(8, "Dark2")[1:length(unique(conditionFilt))])
+
+# Sample distance heatmap
+# Convert count data to a matrix format (required for DESeq2)
+sampleDistsFilt <- as.matrix(dist(t(assay(rldFilt))))
+library(gplots)
+heatmap.2(as.matrix(sampleDistsFilt), key=F, trace="none",
+          col=colorpanel(100, "black", "white"),
+          ColSideColors=mycols[conditionFilt], RowSideColors=mycols[conditionFilt],
+          margin=c(10, 10), main="Sample Distance Matrix")
+
+# png(paste("AllStages_qc_Filt_2-heatmap-samples-OCRP.png"), w=1000, h=1000, pointsize=20)
+# Convert count data to a matrix format (required for DESeq2)
+heatmap.2(as.matrix(sampleDistsFilt), key=F, trace="none",
+          col=colorpanel(100, "black", "white"),
+          ColSideColors=mycols[conditionFilt], RowSideColors=mycols[conditionFilt],
+          margin=c(10, 10), main="Sample Distance Matrix")
+#dev.off()
+
+
+######
+
+```
+
+## DE Analysis
+
+```{r DE Analysis}
+
+      contrastNames <- resultsNames(ddsFilt)[-1]
+      
+      resFilt_List <- list() 
+      res_List <- list()
+      
+      for(nCn in 1:length(contrastNames)){
+        res <- results(ddsFilt ,contrast=list(c(contrastNames[nCn]),character()))
+        res <- res[order(res$padj),]
+        resFilt <- res[which(res$padj<0.05),]
+        
+	      resFilt_List[[nCn]] <- resFilt
+        res_List[[nCn]] <- res
+        
+        resMod <- cbind.data.frame(rownames(res),res)
+        resFiltMod <- cbind.data.frame(rownames(resFilt),resFilt)
+		
+		    colnames(resMod) <- paste(colnames(resMod),".",contrastNames[nCn],sep="")
+		    colnames(resFiltMod) <- paste(colnames(resFiltMod),".",contrastNames[nCn],sep="")
+				
+        colnames(resMod)[1] <- "GeneID"
+        colnames(resFiltMod)[1] <- "GeneID"
+			
+        
+        if(nCn==1){
+          ResS_Comb <- resMod
+          ResSFilt_Comb <- resFiltMod
+        }else if(nCn>1){
+          ResS_Comb <- merge(ResS_Comb,resMod,by="GeneID",all=TRUE)
+          ResSFilt_Comb <- merge(ResSFilt_Comb,resFiltMod,by="GeneID",all=TRUE)
+        }
+        
+      }
+            
+      countsData <- as.data.frame(counts(ddsFilt, normalized=TRUE)) 
+      countsDataMod <- cbind.data.frame(rownames(countsData),countsData)
+      colnames(countsDataMod)[1] <- "GeneID"
+      
+      ResS_Comb_Data <- merge(as.data.frame(ResS_Comb),countsDataMod , by="GeneID", sort=FALSE)
+      
+      
+      write.csv(ResS_Comb_Data, file=paste("All_Stages_diffexpr-results_KTIContrast_OCRP.csv",sep=""),quote = FALSE,row.names = F)
+      write.csv(ResSFilt_Comb, file=paste("All_Stages_Filt_p05_diffexpr-results_KTIContrast_OCRP.csv",sep=""),quote = FALSE,row.names = F)
+ 
+ 
+``` 
+
+### LRT Analysis to isolate genotype x stage interaction 
+In DESeq, a Likelihood Ratio Test (LRT) can be performed by constructing a reduced model 
+from a full model and specifying the test as 'LRT' 
+
+
+```{r LRT} 
+
+
+## LRT using a reduced model
+
+  ddsFiltRed <- DESeq(ddsFilt,test="LRT",reduced = ~Genotype+Stage)
+
+```
+
+### Extract results from LRT for specific contrasts and filter based on adjusted p.value cutoff. 
+For this analysis, a p.adj value of 0.01 was used, resulting in a set of 377 genes.  
+
+```{r LRTResults}
+  
+  resIRed <- results(ddsFiltRed,contrast=list(c("GenotypeKTI.StageR6_1","GenotypeKTI.StageR6_2"))) 
+	
+## Contrasts from full model  
+	
+  resIFull_Main_6_2 <- results(ddsFilt,contrast=list(c("Genotype_KTI_vs_Bert","Stage_R6_2_vs_R5_1","GenotypeKTI.StageR6_2"))) 
+###	 
+	
+	resIFull6_2 <- results(ddsFilt,contrast=list(c("GenotypeKTI.StageR6_2")))
+	resIFull6_1 <- results(ddsFilt,contrast=list(c("GenotypeKTI.StageR6_1")))
+
+
+  resIFull6_2 <- resIFull6_2[order(resIFull6_2$padj),]
+	resIFull6_1 <- resIFull6_1[order(resIFull6_1$padj),]
+	
+	resIFull <- results(ddsFilt,contrast=list(c("GenotypeKTI.StageR6_1","GenotypeKTI.StageR6_2")))
+	
+	
+	   	
+###	p - 0.01
+	
+	padj_cutoff <- 0.01
+
+##
+	resIRed <- resIRed[order(resIRed$padj),]
+  resIRedFilt <- resIRed[which(resIRed$padj<padj_cutoff),]
+	
+## 
+
+	resIRed_GIDS <- rownames(resIRedFilt)
+	
+	resIFull <- resIFull[order(resIFull$padj),]
+
+	resIRed_FC <- resIRedFilt$log2FoldChange
+	names(resIRed_FC) <- rownames(resIRedFilt) 
+	
+
+  resIFull4RedIDs_Ind <- which(rownames(resIFull) %in% resIRed_GIDS)
+	resIFull4RedIDs_Filt <- resIFull[resIFull4RedIDs_Ind,]
+
+#### resIFull
+
+	resIFull_FC <- resIFull$log2FoldChange[which(rownames(resIFull) %in% resIRed_GIDS)]
+	names(resIFull_FC) <- resIRed_GIDS
+		
+		
+	head(assay(rldFilt))
+  rldFilt_IRed <- assay(rldFilt)[which(rownames(assay(rldFilt)) %in% resIRed_GIDS),] 
+  mat <- rldFilt_IRed 
+	mat <- mat - rowMeans(mat)
+
+
+```
+
+## DEG Patterns Analysis 
+
+For an input expression matrix and metadata, degpatterns identifies clusters of genes based on their differential gene expression patter across the time variable like 'stage' and a grouping variable such as 'genotype'. 
+Another important parameter is 'minc' which specifies the minimum number of genes in a cluster. 
+
+```{r DEGPatterns}
+  
+### Cluster using degPatterns   
+ 
+clusters3 <- degPatterns(mat, metadata = coldataFilt, time = "Stage", col="Genotype",minc=5)	 
+	
+
+
+capwords <- function(s, strict = FALSE) {
+    cap <- function(s) paste(toupper(substring(s, 1, 1)),
+                  {s <- substring(s, 2); if(strict) tolower(s) else s},
+                             sep = "", collapse = " " )
+    sapply(strsplit(s, split = " "), cap, USE.NAMES = !is.null(names(s)))
+}
+
+### AnntnTab
+
+AnntnTab <- read.csv("Annotation_AllGenes.csv",header=T)
+colnames(AnntnTab)[1] <- "GeneID"
+AnntnTab[,"GeneID"] <- capwords(tolower(AnntnTab[,"GeneID"]))
+
+
+resIRedFilt_DF <-  as.data.frame(resIRedFilt)
+rownames(resIRedFilt_DF) <- capwords(tolower(rownames(resIRedFilt_DF))) 
+	
+## Merge Res with Anntn	
+ resIRedFilt_AnntnTab <- merge(resIRedFilt_DF,AnntnTab,by.x=0,by.y="GeneID")
+	
+#### 
+	 
+ Clusters3DF <- clusters3$df
+ rownames(Clusters3DF) <- capwords(tolower(rownames(Clusters3DF)))
+ colnames(resIRedFilt_AnntnTab)[1] <- "GeneID"
+ resIRedFilt_AnntnClTab <-  merge(resIRedFilt_AnntnTab,Clusters3DF,by.x="GeneID",by.y=0,all.x=T)
+	
+	
+# write.csv(resIRedFilt_AnntnClTab,"Results_CL3_AnntnTab.csv",quote=FALSE,row.names=FALSE)
+
+   Results_CL3_AnntnTab_DF <- apply(resIRedFilt_AnntnClTab,2,function(x) gsub(",",";",x))
+   
+  # write.csv(Results_CL3_AnntnTab_DF,"Results_CL3_AnntnTab_DF.csv",quote=FALSE,row.names=FALSE)
+
+
+```
+
+
+### Search for interesting genes in the table such as KTI and TFs
+
+```{r exploreIntGenes}
+	 
+	KTITab <- resIRedFilt_AnntnClTab[grep("Kunitz",resIRedFilt_AnntnClTab[,"PFAM.Names"]),]
+	bZIPTab <- resIRedFilt_AnntnClTab[grep("bzip",resIRedFilt_AnntnClTab[,"PFAM.Names"],ignore.case=T),]
+	mybTab <- resIRedFilt_AnntnClTab[grep("myb",resIRedFilt_AnntnClTab[,"PFAM.Names"],ignore.case=T),]
+	cupinTab <- resIRedFilt_AnntnClTab[grep("cupin",resIRedFilt_AnntnClTab[,"PFAM.Names"],ignore.case=T),]
+	
+	RBBTab <- resIRedFilt_AnntnClTab[grep("RBB",resIRedFilt_AnntnClTab[,"Alternative.TAIR10.IDs..9."],ignore.case=T),]
+  HbTab <- resIRedFilt_AnntnClTab[grep("homeo",resIRedFilt_AnntnClTab[,"PFAM.Names"],ignore.case=T),]
+
+  GeneOfIntTab <- rbind.data.frame(KTITab,bZIPTab,mybTab,RBBTab,HbTab)
+  GenesOfInterestTab <- apply(GeneOfIntTab,2,function(x) gsub(",",";",x))
+  
+  View(GenesOfInterestTab)
+ 
+  #write.csv(GenesOfInterestTab,"GenesOfInterest_qPCR.csv",quote=FALSE,row.names=FALSE)
+
+```
+
+
+## 
